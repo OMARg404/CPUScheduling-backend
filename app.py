@@ -72,21 +72,33 @@ class CPUScheduling:
         }
 
     def priority_scheduling(self, processes):
-        for process in processes:
-            process['waiting_time'] = 0
-            process['turnaround_time'] = process['burstTime']
-            process['response_time'] = 0
+     processes = sorted(processes, key=lambda x: (x['arrivalTime'], x['priority']))
+    
+     current_time = 0
+     completed_processes = []
+    
+     for process in processes:
+        if current_time < process['arrivalTime']:
+            current_time = process['arrivalTime']
+        
+        process['waiting_time'] = current_time - process['arrivalTime']
+        process['response_time'] = current_time - process['arrivalTime']
+        current_time += process['burstTime']
+        process['turnaround_time'] = process['waiting_time'] + process['burstTime']
+        
+        completed_processes.append(process)
+    
+     avg_wt = sum(p['waiting_time'] for p in completed_processes) / len(completed_processes)
+     avg_tat = sum(p['turnaround_time'] for p in completed_processes) / len(completed_processes)
+     avg_rt = sum(p['response_time'] for p in completed_processes) / len(completed_processes)
+    
+     return {
+         "processes": completed_processes,
+         "avg_wt": avg_wt,
+         "avg_tat": avg_tat,
+         "avg_rt": avg_rt
+     }
 
-        avg_wt = sum(p['waiting_time'] for p in processes) / len(processes)
-        avg_tat = sum(p['turnaround_time'] for p in processes) / len(processes)
-        avg_rt = sum(p['response_time'] for p in processes) / len(processes)
-
-        return {
-            "processes": processes,
-            "avg_wt": avg_wt,
-            "avg_tat": avg_tat,
-            "avg_rt": avg_rt
-        }
 
     def fcfs(self, processes):
         if not processes:
@@ -131,60 +143,66 @@ class CPUScheduling:
             return {"error": "Each process must have 'arrival' and 'burst'."}
 
         process_list.sort(key=lambda x: x['arrival'])
-        processes = []
-        for pid, process in enumerate(process_list, start=1):
-            processes.append({
-                "pid": pid,
-                "arrival": process['arrival'],
-                "burst": process['burst'],
-                "remaining": process['burst'],
-                "completion": 0,
-                "waiting": 0,
-                "turnaround": 0,
-                "response": -1,
-            })
+        n = len(process_list)
+        remaining_time = [p['burst'] for p in process_list]
+        waiting_time = [0] * n
+        turnaround_time = [0] * n
+        response_time = [-1] * n
 
-        time = 0
+        current_time = 0
         completed = 0
-        ready_queue = []
+        min_burst_time = float('inf')
+        shortest = 0
+        check = False
 
-        while completed < len(processes):
-            for process in processes:
-                if process["arrival"] <= time and process["remaining"] > 0 and process not in ready_queue:
-                    ready_queue.append(process)
+        while completed != n:
+            for i in range(n):
+                if (process_list[i]['arrival'] <= current_time and
+                        remaining_time[i] < min_burst_time and
+                        remaining_time[i] > 0):
+                    min_burst_time = remaining_time[i]
+                    shortest = i
+                    check = True
 
-            if ready_queue:
-                ready_queue.sort(key=lambda x: x["remaining"])
-                current_process = ready_queue[0]
+            if not check:
+                current_time += 1
+                continue
 
-                if current_process["response"] == -1:
-                    current_process["response"] = time - current_process["arrival"]
+            if response_time[shortest] == -1:
+                response_time[shortest] = current_time - process_list[shortest]['arrival']
 
-                current_process["remaining"] -= 1
-                time += 1
+            remaining_time[shortest] -= 1
+            min_burst_time = remaining_time[shortest]
 
-                if current_process["remaining"] == 0:
-                    current_process["completion"] = time
-                    current_process["turnaround"] = current_process["completion"] - current_process["arrival"]
-                    current_process["waiting"] = current_process["turnaround"] - current_process["burst"]
-                    ready_queue.remove(current_process)
-                    completed += 1
-            else:
-                time += 1
+            if min_burst_time == 0:
+                min_burst_time = float('inf')
 
-        total_waiting = sum(process["waiting"] for process in processes)
-        total_turnaround = sum(process["turnaround"] for process in processes)
-        total_response = sum(process["response"] for process in processes)
-        avg_waiting = total_waiting / len(processes)
-        avg_turnaround = total_turnaround / len(processes)
-        avg_response = total_response / len(processes)
+            if remaining_time[shortest] == 0:
+                completed += 1
+                check = False
+                finish_time = current_time + 1
+                turnaround_time[shortest] = finish_time - process_list[shortest]['arrival']
+                waiting_time[shortest] = turnaround_time[shortest] - process_list[shortest]['burst']
+
+            current_time += 1
+
+        avg_wt = sum(waiting_time) / n
+        avg_tat = sum(turnaround_time) / n
+        avg_rt = sum(response_time) / n
+
+        for i in range(n):
+            process_list[i]['waiting_time'] = waiting_time[i]
+            process_list[i]['turnaround_time'] = turnaround_time[i]
+            process_list[i]['response_time'] = response_time[i]
 
         return {
-            "processes": processes,
-            "avg_wt": avg_waiting,
-            "avg_tat": avg_turnaround,
-            "avg_rt": avg_response
+            "processes": process_list,
+            "avg_wt": avg_wt,
+            "avg_tat": avg_tat,
+            "avg_rt": avg_rt
         }
+
+
 
     def sjf_non_preemptive(self, processes):
         if not processes:
@@ -260,10 +278,9 @@ def fcfs():
 
 @app.route('/preemptive_sjf', methods=['POST'])
 def preemptive_sjf():
-    data = request.get_json()
-    processes = data.get("processes")
+    data = request.json
     scheduler = CPUScheduling()
-    result = scheduler.preemptive_sjf(processes)
+    result = scheduler.preemptive_sjf(data['processes'])
     return jsonify(result)
 
 @app.route('/sjf_non_preemptive', methods=['POST'])
